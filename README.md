@@ -8,7 +8,7 @@ Let's create an AI that's able to play Super Mario Bros! We'll be using Double D
 **First, clone this repository and install conda**
 
 ```bash
-git clone[ https://github.com/Sourish07/Super-Mario-Bros-RL.git](https://github.com/DogguG/Reinforcement-Learning-Mario-Project)
+git clone https://github.com/DogguG/Reinforcement-Learning-Mario-Project
 ```
 
 **Next, create a virtual environment**
