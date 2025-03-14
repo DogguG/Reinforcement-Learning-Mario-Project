@@ -4,10 +4,9 @@ Let's create an AI that's able to play Super Mario Bros! We'll be using Double D
 Watch the accompanying YouTube video here! Hope you enjoy it!
 
 Installation
-First, clone this repository
+First, clone this repository and download conda
 
-git clone https://github.com/Sourish07/Super-Mario-Bros-RL.git
-Next, create a virtual environment
+Next, create a virtual environment using conda
 
 The command below is for a conda environment, but use whatever you're comfortable with. I'm using Python 3.10.12.
 
