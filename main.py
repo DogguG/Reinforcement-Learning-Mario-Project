@@ -11,7 +11,6 @@ import os
 import csv
 from datetime import datetime
 
-# Tối ưu hóa CUDA
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
 if torch.cuda.is_available():
@@ -19,23 +18,30 @@ if torch.cuda.is_available():
     torch.cuda.empty_cache()
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
 
-# In thư mục làm việc hiện tại
 print("Current working directory:", os.getcwd())
 
-# Hàm để ghi dữ liệu vào file CSV
-def log_to_csv(episode, total_reward, epsilon, replay_buffer_size, learn_step_counter, filename=os.path.join("D:/Project/Seerminar/Super-Mario-Bros-RL", "training_log.csv")):
+# Ánh xạ hành động sang tên dễ hiểu
+ACTION_NAMES = {
+    0: 'noop',
+    1: 'move_right',
+    2: 'move_right_jump',
+    3: 'move_right_speed',
+    4: 'move_right_jump_speed',
+}
+
+# Hàm log_to_csv được sửa lại để ghi chi tiết hơn tại mỗi bước
+def log_to_csv(episode, step, action, q_value, x_pos, total_reward, epsilon, replay_buffer_size, learn_step_counter, filename=os.path.join("D:/Project/Seerminar/Super-Mario-Bros-RL", "training_log.csv")):
     file_exists = os.path.isfile(filename)
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         with open(filename, mode='a', newline='') as file:
             writer = csv.writer(file)
             if not file_exists:
-                writer.writerow(["Episode", "Total Reward", "Epsilon", "Replay Buffer Size", "Learn Step Counter", "Timestamp"])
-            writer.writerow([episode, total_reward, epsilon, replay_buffer_size, learn_step_counter, current_time])
+                writer.writerow(["Episode", "Step", "Action", "Q-Value", "X-Position", "Total Reward", "Epsilon", "Replay Buffer Size", "Learn Step Counter", "Timestamp"])
+            writer.writerow([episode, step, ACTION_NAMES[action], q_value, x_pos, total_reward, epsilon, replay_buffer_size, learn_step_counter, current_time])
     except Exception as e:
         print(f"Error writing to CSV: {e}")
 
-# Wrapper để thêm phần thưởng tùy chỉnh
 class RewardWrapper(Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -56,7 +62,7 @@ class RewardWrapper(Wrapper):
             reward += 2000
         
         if x_pos > self.prev_x_pos + 50:
-            reward += 200  # Tăng phần thưởng khi đi xa
+            reward += 200
         
         if y_pos > self.prev_y_pos + 20:
             reward += 30
@@ -65,25 +71,24 @@ class RewardWrapper(Wrapper):
             reward += 50
         
         if x_pos > self.max_x_pos:
-            reward += 30  # Tăng phần thưởng khi đạt vị trí xa nhất
+            reward += 30
             self.max_x_pos = x_pos
         
         if x_pos == self.prev_x_pos:
             self.stagnation_counter += 1
             if self.stagnation_counter >= self.stagnation_threshold:
-                reward -= 2  # Giảm phạt khi đứng yên
+                reward -= 2
         else:
             self.stagnation_counter = 0
 
         if done and not info.get('flag_get', False) and x_pos < 1000:
-            reward -= 300  # Tăng phạt khi chết sớm
+            reward -= 300
 
         self.prev_x_pos = x_pos
         self.prev_y_pos = y_pos
         self.prev_score = score
         return state, reward, done, trunc, info
 
-# Wrapper để lưu frame và hành động
 class SkipFrame(Wrapper):
     def __init__(self, env, skip):
         super().__init__(env)
@@ -109,7 +114,6 @@ class SkipFrame(Wrapper):
         self.actions_log = [0]
         return state, info
 
-# Hàm apply_wrappers
 def apply_wrappers(env):
     env = SkipFrame(env, skip=4)
     env = ResizeObservation(env, shape=84)
@@ -118,7 +122,6 @@ def apply_wrappers(env):
     env = RewardWrapper(env)
     return env
 
-# Định nghĩa CBAM và AgentNN
 class CBAM(torch.nn.Module):
     def __init__(self, channels, reduction=16):
         super(CBAM, self).__init__()
@@ -186,7 +189,6 @@ class AgentNN(torch.nn.Module):
         for p in self.network.parameters():
             p.requires_grad = False
 
-# Cấu hình huấn luyện
 model_path = os.path.join("models", "mario_model")
 os.makedirs(model_path, exist_ok=True)
 
@@ -205,22 +207,20 @@ env = gym_super_mario_bros.make(ENV_NAME, render_mode='human' if DISPLAY else 'r
 env = JoypadSpace(env, RIGHT_ONLY)
 env = apply_wrappers(env)
 
-# Tạo agent với AgentNN
 agent = Agent(input_dims=env.observation_space.shape, 
               num_actions=env.action_space.n,
               lr=0.0001,
               batch_size=256,
-              replay_buffer_capacity=500_000,  # Tăng dung lượng replay buffer
+              replay_buffer_capacity=500_000,
               eps_decay=0.9995,
               eps_min=0.15,
               network_class=AgentNN)
 
-# Tải mô hình đã huấn luyện tại episode 1000 để tiếp tục
-checkpoint_path = "D:\Project\Seerminar\Super-Mario-Bros-RL\models\mario_model\model_1500_iter.pt"
+checkpoint_path = "D:/Project/Seerminar/Super-Mario-Bros-RL/models/mario_model/model_1500_iter.pt"
 if os.path.exists(checkpoint_path):
     print(f"Loading model from {checkpoint_path}")
     agent.load_model(checkpoint_path)
-    agent.epsilon = 0.5  # Tăng epsilon để khám phá thêm
+    agent.epsilon = 0.5
 else:
     print(f"Checkpoint {checkpoint_path} not found! Starting from scratch.")
     agent.epsilon = 1.0
@@ -236,17 +236,14 @@ if not SHOULD_TRAIN:
 env.reset()
 next_state, reward, done, trunc, info = env.step(action=0)
 
-# Hàm để học nhiều lần trong mỗi bước
-def learn_multiple_times(agent, times=12):  # Tăng số lần học
+def learn_multiple_times(agent, times=12):
     for _ in range(times):
         agent.learn()
 
-# Tạo hàm prefetch để tối ưu hóa việc lưu trữ dữ liệu
 def prefetch_experiences(agent, states, actions, rewards, next_states, dones):
     for i in range(len(states)):
         agent.store_in_memory(states[i], actions[i], rewards[i], next_states[i], dones[i])
 
-# Chuẩn bị buffer cho prefetch
 prefetch_states = []
 prefetch_actions = []
 prefetch_rewards = []
@@ -254,20 +251,42 @@ prefetch_next_states = []
 prefetch_dones = []
 prefetch_threshold = 64
 
-# Tiếp tục huấn luyện từ episode 1230
-START_EPISODE = 1508
+START_EPISODE = 1787
 print(f"Starting training from episode {START_EPISODE}")
 for i in range(START_EPISODE, NUM_OF_EPISODES + 1):
     print("Episode:", i)
     done = False
     state, _ = env.reset()
     total_reward = 0
+    step = 0
     
     try:
         while not done:
+            # Chọn hành động và tính Q-value
+            state_tensor = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(agent.online_network.device)
+            with torch.no_grad():
+                q_values = agent.online_network(state_tensor).cpu().numpy()[0]
             a = agent.choose_action(state)
+            
+            # In Q-value của hành động được chọn
+            chosen_q_value = q_values[a]
+            print(f"Episode {i} - Step {step} - Action: {ACTION_NAMES[a]} - Q-Value: {chosen_q_value:.4f} - All Q-Values: {q_values}")
+            
             new_state, reward, done, truncated, info = env.step(a)
             total_reward += reward
+            
+            # Ghi log tại mỗi bước
+            log_to_csv(
+                episode=i,
+                step=step,
+                action=a,
+                q_value=chosen_q_value,
+                x_pos=info['x_pos'],
+                total_reward=total_reward,
+                epsilon=agent.epsilon,
+                replay_buffer_size=len(agent.replay_buffer),
+                learn_step_counter=agent.learn_step_counter
+            )
             
             if SHOULD_TRAIN:
                 prefetch_states.append(state)
@@ -296,19 +315,13 @@ for i in range(START_EPISODE, NUM_OF_EPISODES + 1):
                 learn_multiple_times(agent, times=8)
                 
             state = new_state
+            step += 1
+            
     except Exception as e:
         print(f"Error in episode {i}: {e}")
         continue
         
     print("Total reward:", total_reward, "Epsilon:", agent.epsilon, "Size of replay buffer:", len(agent.replay_buffer), "Learn step counter:", agent.learn_step_counter)
-    
-    log_to_csv(
-        episode=i,
-        total_reward=total_reward,
-        epsilon=agent.epsilon,
-        replay_buffer_size=len(agent.replay_buffer),
-        learn_step_counter=agent.learn_step_counter
-    )
     
     if SHOULD_TRAIN and (i + 1) % CKPT_SAVE_INTERVAL == 0:
         checkpoint_path = os.path.join(model_path, f"model_{i + 1}_iter.pt")

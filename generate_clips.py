@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from skimage.segmentation import mark_boundaries
 from skimage import segmentation, feature, measure
 
-# Modified SkipFrame wrapper to log frames and actions
 class SkipFrame(Wrapper):
     def __init__(self, env, skip):
         super().__init__(env)
@@ -47,12 +46,11 @@ def apply_wrappers(env):
     env = FrameStack(env, num_stack=4, lz4_compress=True)
     return env
 
-# Hàm để xác định chướng ngại vật (tinh chỉnh để loại bỏ mặt đất)
 def detect_obstacles(state_rgb):
     img_gray = np.mean(state_rgb, axis=2).astype(np.uint8)
     edges = feature.canny(img_gray, sigma=1.0)
     obstacle_mask = np.zeros_like(img_gray, dtype=bool)
-    obstacle_mask[40:70, :] = True  # Chỉ lấy vùng y từ 40 đến 70
+    obstacle_mask[40:70, :] = True
     obstacle_edges = edges & obstacle_mask
     segments = segmentation.slic(state_rgb, n_segments=50, compactness=10, sigma=1)
     obstacle_segment_mask = np.zeros_like(segments, dtype=bool)
@@ -60,12 +58,11 @@ def detect_obstacles(state_rgb):
         region_id = region.label - 1
         region_coords = region.coords
         if np.any(obstacle_edges[region_coords[:, 0], region_coords[:, 1]]):
-            if np.all(region_coords[:, 0] > 70):  # Bỏ qua mặt đất
+            if np.all(region_coords[:, 0] > 70):
                 continue
             obstacle_segment_mask[segments == region_id] = True
     return obstacle_segment_mask
 
-# Hàm phân đoạn tùy chỉnh cho LIME
 def custom_segmentation(image):
     img_gray = np.mean(image, axis=2).astype(np.uint8)
     edges = feature.canny(img_gray, sigma=1.0)
@@ -85,13 +82,11 @@ def custom_segmentation(image):
     labels[obstacle_segment_mask] = 1
     return labels
 
-# Hàm để chuyển trạng thái thành hình ảnh RGB (cho LIME)
 def state_to_rgb(state):
-    frame = state[3]  # Lấy frame cuối cùng trong stack
+    frame = state[3]
     frame = np.repeat(frame[:, :, np.newaxis], 3, axis=2)
     return frame.astype(np.uint8)
 
-# Hàm dự đoán cho LIME
 def predict_fn(images, agent):
     processed_states = []
     for img in images:
@@ -104,15 +99,20 @@ def predict_fn(images, agent):
         q_values = agent.online_network(states_tensor)
     return q_values.cpu().numpy()
 
-# Hàm giải thích bằng LIME và lưu hình ảnh
 def explain_action(state, action, agent, episode, frame_idx, output_dir):
     state_rgb = state_to_rgb(state)
     explainer = lime_image.LimeImageExplainer()
+    # Dự đoán Q-value trước khi giải thích
+    state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(agent.online_network.device)
+    with torch.no_grad():
+        q_values = agent.online_network(state_tensor).cpu().numpy()[0]
+    print(f"Episode {episode}, Frame {frame_idx} - Q-values: {q_values}")  # Sửa lỗi cú pháp
+
     explanation = explainer.explain_instance(
         state_rgb,
         lambda x: predict_fn(x, agent),
         top_labels=1,
-        num_samples=2000,  # Giảm số mẫu để tăng tốc độ
+        num_samples=2000,
         segmentation_fn=custom_segmentation
     )
     temp, mask = explanation.get_image_and_mask(
@@ -120,19 +120,16 @@ def explain_action(state, action, agent, episode, frame_idx, output_dir):
         positive_only=True,
         num_features=5
     )
-    # Tạo hình ảnh giải thích
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
     ax1.imshow(state_rgb)
     ax1.set_title(f"Original State (Episode {episode}, Frame {frame_idx})")
     ax1.axis('off')
     ax2.imshow(mark_boundaries(state_rgb, mask))
-    ax2.set_title(f"LIME Explanation: Action {action}")
+    ax2.set_title(f"LIME Explanation: Action {action}, Q-value: {q_values[action]:.4f}")
     ax2.axis('off')
-    # Lưu hình ảnh
     plt.savefig(os.path.join(output_dir, f"episode_{episode}_frame_{frame_idx}.png"), bbox_inches='tight')
     plt.close(fig)
 
-# Định nghĩa CBAM và AgentNN
 class CBAM(torch.nn.Module):
     def __init__(self, channels, reduction=16):
         super(CBAM, self).__init__()
@@ -179,7 +176,7 @@ class AgentNN(torch.nn.Module):
             torch.nn.Flatten(),
             torch.nn.Linear(conv_out_size, 512),
             torch.nn.ReLU(),
-            torch.nn.Dropout(0.5),  # Thêm Dropout để khớp với main.py
+            torch.nn.Dropout(0.5),
             torch.nn.Linear(512, n_actions)
         )
 
@@ -200,31 +197,26 @@ class AgentNN(torch.nn.Module):
         for p in self.network.parameters():
             p.requires_grad = False
 
-# Thiết lập môi trường
 ENV_NAME = 'SuperMarioBros-1-1-v0'
-NUM_OF_EPISODES = 5  # Giảm số episode để kiểm tra nhanh
+NUM_OF_EPISODES = 5
 
 env = gym_super_mario_bros.make(ENV_NAME, render_mode='rgb_array', apply_api_compatibility=True)
 env = JoypadSpace(env, RIGHT_ONLY)
 env = apply_wrappers(env)
 
-# Tạo agent với AgentNN
 agent = Agent(input_dims=env.observation_space.shape, 
               num_actions=env.action_space.n,
               network_class=AgentNN)
 
-# Tải mô hình đã huấn luyện
 model_path = "D:/Project/Seerminar/Super-Mario-Bros-RL/models/mario_model/model_1500_iter.pt"
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"Model file {model_path} not found!")
 agent.load_model(model_path)
-agent.epsilon = 0.0  # Tắt khám phá để agent chỉ khai thác
+agent.epsilon = 0.0
 
-# Tạo thư mục lưu hình ảnh LIME
 output_dir = "lime_explanations"
 os.makedirs(output_dir, exist_ok=True)
 
-# Chạy agent và giải thích bằng LIME
 for i in range(NUM_OF_EPISODES):
     done = False
     state, _ = env.reset()
@@ -235,8 +227,7 @@ for i in range(NUM_OF_EPISODES):
         new_state, reward, done, truncated, info = env.step(action)
         rewards += reward
 
-        # Chỉ giải thích các frame quan trọng (ví dụ: khi agent nhảy, action=1)
-        if frame_idx % 50 == 0 or action == 1:  # Giả sử action=1 là nhảy
+        if frame_idx % 50 == 0 or action == 1:
             try:
                 explain_action(state, action, agent, i, frame_idx, output_dir)
                 print(f"Saved LIME explanation for Episode {i}, Frame {frame_idx}")
@@ -258,14 +249,13 @@ for i in range(NUM_OF_EPISODES):
                     scaling_factor = 10
                     new_dims = (frame.shape[1] * scaling_factor, frame.shape[0] * scaling_factor)
                     frame = np.array(frame).astype(np.uint8)
-                    if frame.ndim == 2:  # Nếu frame là grayscale, chuyển thành RGB
+                    if frame.ndim == 2:
                         frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
                     frame = cv2.resize(frame, new_dims, interpolation=cv2.INTER_NEAREST)
                     cv2.imwrite(os.path.join("games", f"game_{i}", f"frame_{j}.png"), frame)
 
 env.close()
 
-# Tạo video từ các hình ảnh LIME (tùy chọn)
 video_path = os.path.join(output_dir, "lime_explanation_video.mp4")
 frame_files = sorted([f for f in os.listdir(output_dir) if f.endswith(".png")])
 if frame_files:
