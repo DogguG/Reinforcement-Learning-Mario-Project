@@ -47,9 +47,6 @@ class Agent:
         if np.random.random() < self.epsilon:
             return np.random.randint(self.num_actions)
         # Passing in a list of numpy arrays is slower than creating a tensor from a numpy array
-        # Hence the `np.array(observation)` instead of `observation`
-        # observation is a LIST of numpy arrays because of the LazyFrame wrapper
-        # Unqueeze adds a dimension to the tensor, which represents the batch dimension
         observation = torch.tensor(np.array(observation), dtype=torch.float32) \
                         .unsqueeze(0) \
                         .to(self.online_network.device)
